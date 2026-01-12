@@ -1,79 +1,84 @@
 import streamlit as st
+from supabase import create_client, Client
 
-# --- Konfiguracja Stanu Sesji ---
-# Inicjalizacja listy towarów w st.session_state, jeśli jeszcze nie istnieje.
-# To zapewni, że lista jest utrzymywana podczas sesji użytkownika.
-if 'inventory' not in st.session_state:
-    st.session_state.inventory = []
+# --- Konfiguracja Połączenia Supabase ---
+# W wersji produkcyjnej użyj st.secrets (https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management)
+URL = "TWOJ_SUPABASE_URL"
+KEY = "TWOJ_SUPABASE_ANON_KEY"
 
-# --- Funkcje Logiki Magazynu ---
+@st.cache_resource
+def init_connection():
+    return create_client(URL, KEY)
 
-def add_item(item_name):
-    """Dodaje towar do magazynu, jeśli pole nie jest puste."""
-    if item_name.strip():
-        # Używamy metody append() do dodania elementu do listy
-        st.session_state.inventory.append(item_name.strip())
-        st.success(f"Dodano: **{item_name.strip()}** do magazynu.")
-    else:
-        st.warning("Nazwa towaru nie może być pusta.")
+supabase = init_connection()
 
-def delete_item(item_name):
-    """Usuwa towar z magazynu, jeśli istnieje."""
-    try:
-        # Używamy metody remove() do usunięcia pierwszego wystąpienia elementu
-        st.session_state.inventory.remove(item_name)
-        st.success(f"Usunięto: **{item_name}** z magazynu.")
-    except ValueError:
-        st.error(f"Błąd: Towar **{item_name}** nie został znaleziony w magazynie.")
+# --- Funkcje Obsługi Bazy Danych ---
 
-# --- Interfejs Użytkownika Streamlit ---
+def get_categories():
+    """Pobiera listę wszystkich kategorii."""
+    response = supabase.table("Kategorie").select("*").execute()
+    return response.data
 
-st.title("🗃️ Prosty Magazyn (Streamlit + Listy)")
-st.caption("Dane są przechowywane tylko na czas bieżącej sesji w pamięci.")
+def add_product(nazwa, liczba, cena, kategoria_id):
+    """Dodaje nowy produkt powiązany z kategorią."""
+    data = {
+        "nazwa": nazwa,
+        "liczba": liczba,
+        "cena": cena,
+        "kategoria_id": kategoria_id
+    }
+    supabase.table("Produkty").insert(data).execute()
+    st.success(f"Dodano produkt: {nazwa}")
 
-# --- 1. Dodawanie Towaru ---
-st.header("➕ Dodaj Towar")
-# Pole tekstowe dla nowego towaru
-new_item = st.text_input("Wprowadź nazwę nowego towaru:", key="new_item_input")
+# --- Interfejs Użytkownika ---
 
-# Przycisk do dodawania towaru. Używamy lambdy, aby przekazać argument do funkcji.
-if st.button("Dodaj do Magazynu"):
-    add_item(new_item)
-    # Opcjonalnie: wyczyść pole wprowadzania po dodaniu
-    # st.session_state.new_item_input = "" 
+st.title("📦 Zarządzanie Magazynem (Supabase)")
 
+# Pobieramy kategorie do selectboxa
+kategorie = get_categories()
+kategorie_dict = {cat['nazwa']: cat['id'] for cat in kategorie}
 
-# --- 2. Aktualny Stan Magazynu ---
-st.header("📋 Stan Magazynu")
+# --- Formularz Dodawania Produktu ---
+st.header("➕ Dodaj Nowy Produkt")
 
-if not st.session_state.inventory:
-    st.info("Magazyn jest pusty.")
-else:
-    # Wyświetlanie listy towarów
-    # Możemy użyć st.dataframe lub st.write
-    st.markdown("##### Towary w Magazynie:")
-    st.dataframe(
-        {"Nazwa Towaru": st.session_state.inventory},
-        hide_index=True,
-        use_container_width=True
-    )
-
-# --- 3. Usuwanie Towaru ---
-st.header("🗑️ Usuń Towar")
-
-# Używamy st.selectbox, aby wybrać towar do usunięcia z listy dostępnych
-if st.session_state.inventory:
-    item_to_delete = st.selectbox(
-        "Wybierz towar do usunięcia:",
-        options=st.session_state.inventory,
-        key="delete_item_select"
-    )
+with st.form("add_product_form", clear_on_submit=True):
+    col1, col2 = st.columns(2)
     
-    # Przycisk do usuwania. 
-    # Używamy lambdy, aby przekazać argument do funkcji.
-    if st.button("Usuń Wybrany Towar"):
-        delete_item(item_to_delete)
-        # Rerun aplikacji, aby odświeżyć stan SelectBoxa i listy
-        st.rerun() 
+    with col1:
+        nazwa = st.text_input("Nazwa produktu")
+        liczba = st.number_input("Liczba (szt.)", min_value=0, step=1)
+    
+    with col2:
+        cena = st.number_input("Cena", min_value=0.0, format="%.2f")
+        # Tutaj wybieramy kategorię na podstawie relacji ze schematu
+        wybrana_kat_nazwa = st.selectbox("Kategoria", options=list(kategorie_dict.keys()))
+    
+    submit = st.form_submit_button("Zapisz w bazie")
+
+    if submit:
+        if nazwa and wybrana_kat_nazwa:
+            kat_id = kategorie_dict[wybrana_kat_nazwa]
+            add_product(nazwa, liczba, cena, kat_id)
+        else:
+            st.error("Wypełnij wszystkie pola!")
+
+st.divider()
+
+# --- Widok Tabeli ---
+st.header("📋 Stan Magazynu")
+# Pobieramy produkty wraz z danymi o kategoriach (Join)
+response = supabase.table("Produkty").select("nazwa, liczba, cena, Kategorie(nazwa)").execute()
+
+if response.data:
+    # Formatowanie danych do ładnej tabeli
+    formatted_data = [
+        {
+            "Produkt": p['nazwa'],
+            "Ilość": p['liczba'],
+            "Cena": f"{p['cena']} zł",
+            "Kategoria": p['Kategorie']['nazwa'] if p['Kategorie'] else "Brak"
+        } for p in response.data
+    ]
+    st.dataframe(formatted_data, use_container_width=True)
 else:
-    st.info("Brak towarów do usunięcia.")
+    st.info("Brak produktów w bazie danych.")
