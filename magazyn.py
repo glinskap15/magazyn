@@ -3,165 +3,162 @@ from supabase import create_client, Client
 import pandas as pd
 import plotly.express as px
 
-# --- Konfiguracja Wyglądu ---
-st.set_page_config(page_title="Magazyn Pastel Pro", layout="wide")
+# --- 1. Konfiguracja Stylu Baby Blue & Pink ---
+st.set_page_config(page_title="Magazyn Pastel Pro", layout="wide", page_icon="☁️")
 
-# Definicja kolorów Baby Blue i Pink
+# Kolory przewodnie
 BABY_BLUE = "#A2D2FF"
 SOFT_PINK = "#FFC8DD"
-DEEP_BLUE = "#5E60CE"
+PASTEL_WHITE = "#FBFAFF"
+TEXT_BLUE = "#5E60CE"
 
-# Niestandardowy CSS
 st.markdown(f"""
     <style>
-    .stApp {{
-        background-color: #F8FBFF;
-    }}
-    h1, h2, h3 {{
-        color: {DEEP_BLUE} !important;
-    }}
-    /* Przyciski w kolorze Baby Blue */
+    .stApp {{ background-color: {PASTEL_WHITE}; }}
+    h1, h2, h3 {{ color: {TEXT_BLUE} !important; font-family: 'Quicksand', sans-serif; }}
     .stButton>button {{
         background-color: {BABY_BLUE};
         color: white;
-        border-radius: 12px;
+        border-radius: 15px;
         border: none;
+        padding: 0.5rem 2rem;
         font-weight: bold;
+        transition: 0.3s;
     }}
     .stButton>button:hover {{
         background-color: {SOFT_PINK};
-        color: #444;
+        color: #555;
+        transform: translateY(-2px);
     }}
-    /* Stylizacja metryk */
-    [data-testid="stMetricValue"] {{
-        color: {DEEP_BLUE};
+    .stTabs [data-baseweb="tab-list"] {{ gap: 10px; }}
+    .stTabs [data-baseweb="tab"] {{
+        background-color: #f0f2f6;
+        border-radius: 10px 10px 0 0;
+        padding: 10px 20px;
     }}
+    .stTabs [aria-selected="true"] {{ background-color: {BABY_BLUE} !important; color: white !important; }}
     </style>
     """, unsafe_allow_html=True)
 
-# --- Inicjalizacja Połączenia ---
+# --- 2. Połączenie z Supabase ---
 @st.cache_resource
 def init_connection():
     try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_KEY"]
-        return create_client(url, key)
-    except Exception as e:
-        st.error(f"Błąd połączenia: {e}")
+        return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+    except:
+        st.error("❌ Błąd konfiguracji! Sprawdź Secrets w Streamlit Cloud.")
         return None
 
 supabase = init_connection()
 
-# --- Funkcje Logiki ---
+# --- 3. Funkcje Pomocnicze (Obsługa błędów nazw tabel) ---
+def get_table_name(target):
+    """Sprawdza czy tabela istnieje jako 'produkty' czy 'Produkty'."""
+    options = [target.lower(), target.capitalize()]
+    for opt in options:
+        try:
+            supabase.table(opt).select("id").limit(1).execute()
+            return opt
+        except: continue
+    return options[0]
+
 def pobierz_dane(tabela):
-    res = supabase.table(tabela).select("*").execute()
+    real_name = get_table_name(tabela)
+    res = supabase.table(real_name).select("*").execute()
     return res.data
 
-# --- INTERFEJS ---
+# --- 4. Interfejs Główny ---
 st.title("☁️ Pastelowy Magazyn: Baby Blue Edition")
 
 if supabase:
-    tab1, tab2, tab3 = st.tabs(["📊 Statystyki", "📦 Towary", "📂 Kategorie"])
+    tab_dash, tab_prod, tab_kat = st.tabs(["📊 Statystyki", "📦 Zarządzanie Towarem", "📂 Kategorie"])
 
-    # --- TAB 1: DASHBOARD ---
-    with tab1:
-        produkty_raw = pobierz_dane("produkty")
-        if produkty_raw:
-            df = pd.DataFrame(produkty_raw)
-            df['wartosc'] = df['liczba'] * df['cena']
+    # --- TAB: DASHBOARD ---
+    with tab_dash:
+        data_p = pobierz_dane("produkty")
+        if data_p:
+            df = pd.DataFrame(data_p)
+            df['Wartość'] = df['liczba'] * df['cena']
             
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Wszystkie Produkty", len(df))
-            c2.metric("Suma sztuk", int(df['liczba'].sum()))
-            c3.metric("Wartość (PLN)", f"{df['wartosc'].sum():,.2f}")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Liczba Produktów", len(df))
+            m2.metric("Suma Sztuk", int(df['liczba'].sum()))
+            m3.metric("Wartość Magazynu", f"{df['Wartość'].sum():,.2f} PLN")
 
-            st.subheader("Ilość towarów na stanie")
-            
-            # Wykres Plotly w kolorze Baby Blue
-            fig = px.bar(
-                df, 
-                x='nazwa', 
-                y='liczba',
-                color_discrete_sequence=[BABY_BLUE],
-                labels={'nazwa': 'Produkt', 'liczba': 'Ilość sztuk'}
-            )
-            fig.update_layout(
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                font_color=DEEP_BLUE,
-                margin=dict(l=20, r=20, t=20, b=20)
-            )
+            st.subheader("Wizualizacja Stanów")
+            fig = px.bar(df, x='nazwa', y='liczba', 
+                         color_discrete_sequence=[BABY_BLUE],
+                         labels={'nazwa': 'Produkt', 'liczba': 'Ilość'})
+            fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("Dodaj produkty, aby zobaczyć wykresy.")
+            st.info("Baza jest pusta. Dodaj produkty w kolejnej zakładce!")
 
-    # --- TAB 2: TOWARY (DODAWANIE I USUWANIE SZTUK) ---
-    with tab2:
-        col_form, col_view = st.columns([1, 2])
+    # --- TAB: ZARZĄDZANIE TOWAREM ---
+    with tab_prod:
+        col_inc, col_list = st.columns([1, 1.5])
         
-        with col_form:
-            st.subheader("Dodaj / Zdejmij sztuki")
-            if produkty_raw:
-                prod_opcje = {p['nazwa']: p for p in produkty_raw}
-                wybrany_n = st.selectbox("Wybierz produkt z listy", options=list(prod_opcje.keys()))
-                wybrany_p = prod_opcje[wybrany_n]
+        with col_inc:
+            st.subheader("🔄 Zmień Ilość / Dodaj")
+            if data_p:
+                wybor = st.selectbox("Wybierz produkt do edycji", options=[p['nazwa'] for p in data_p])
+                p_obj = next(item for item in data_p if item["nazwa"] == wybor)
                 
-                st.write(f"Obecnie masz: **{wybrany_p['liczba']}** szt.")
-                operacja = st.radio("Akcja:", ["Dodaj sztuki", "Odejmij sztuki"])
-                ile = st.number_input("Ilość", min_value=1, step=1)
+                st.write(f"Aktualnie w bazie: **{p_obj['liczba']}** szt.")
+                delta = st.number_input("O ile zmienić? (użyj minusa aby odjąć)", value=0)
                 
-                if st.button("Zatwierdź zmianę"):
-                    nowa_ilosc = wybrany_p['liczba'] + (ile if operacja == "Dodaj sztuki" else -ile)
-                    
-                    if nowa_ilosc < 0:
-                        st.error("Nie możesz odjąć więcej niż masz!")
+                if st.button("Zaktualizuj Ilość"):
+                    nowa_ilosc = p_obj['liczba'] + delta
+                    if nowa_ilosc < 0: st.error("Nie można zejść poniżej zera!")
                     else:
-                        supabase.table("produkty").update({"liczba": nowa_ilosc}).eq("id", wybrany_p['id']).execute()
-                        st.success("Zaktualizowano stan!")
+                        supabase.table(get_table_name("produkty")).update({"liczba": nowa_ilosc}).eq("id", p_obj['id']).execute()
+                        st.success("Zmieniono ilość!")
                         st.rerun()
-            
+                
+                if st.button("🗑️ Usuń całkowicie produkt", type="secondary"):
+                    supabase.table(get_table_name("produkty")).delete().eq("id", p_obj['id']).execute()
+                    st.rerun()
+
             st.divider()
-            st.subheader("✨ Całkowicie nowy produkt")
-            kat_data = pobierz_dane("kategorie")
-            if kat_data:
-                kat_map = {k['nazwa']: k['id'] for k in kat_data}
-                with st.form("new_p"):
-                    n = st.text_input("Nazwa produktu")
-                    l = st.number_input("Ilość", min_value=0)
+            st.subheader("✨ Nowy Produkt")
+            kat_list = pobierz_dane("kategorie")
+            if kat_list:
+                kat_map = {k['nazwa']: k['id'] for k in kat_list}
+                with st.form("new_product"):
+                    n = st.text_input("Nazwa")
+                    l = st.number_input("Ilość", min_value=1)
                     c = st.number_input("Cena", min_value=0.0)
                     k = st.selectbox("Kategoria", options=list(kat_map.keys()))
                     if st.form_submit_button("Dodaj produkt"):
-                        supabase.table("produkty").insert({"nazwa": n, "liczba": l, "cena": c, "kategoria_id": kat_map[k]}).execute()
+                        supabase.table(get_table_name("produkty")).insert({
+                            "nazwa": n, "liczba": l, "cena": c, "kategoria_id": kat_map[k]
+                        }).execute()
                         st.rerun()
 
-        with col_view:
-            st.subheader("Lista towarów")
-            if produkty_raw:
-                st.dataframe(df[['nazwa', 'liczba', 'cena', 'wartosc']], use_container_width=True)
-            
-            # Przycisk usuwania całego produktu
-            st.subheader("🗑️ Usuń produkt z bazy")
-            if produkty_raw:
-                p_usun = st.selectbox("Produkt do całkowitego usunięcia", options=list(prod_opcje.keys()), key="del_prod")
-                if st.button("Usuń trwale"):
-                    supabase.table("produkty").delete().eq("id", prod_opcje[p_usun]['id']).execute()
-                    st.rerun()
+        with col_list:
+            st.subheader("📋 Aktualna Lista")
+            if data_p:
+                st.dataframe(df[['nazwa', 'liczba', 'cena', 'Wartość']], use_container_width=True)
 
-    # --- TAB 3: KATEGORIE ---
-    with tab3:
+    # --- TAB: KATEGORIE ---
+    with tab_kat:
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("Nowa kategoria")
-            with st.form("kat_f"):
+            st.subheader("📂 Nowa Kategoria")
+            with st.form("new_kat"):
                 nk = st.text_input("Nazwa")
+                ok = st.text_area("Opis")
                 if st.form_submit_button("Dodaj"):
-                    supabase.table("kategorie").insert({"nazwa": nk}).execute()
+                    supabase.table(get_table_name("kategorie")).insert({"nazwa": nk, "opis": ok}).execute()
                     st.rerun()
         with c2:
-            st.subheader("Usuń kategorię")
-            if kat_data:
-                kd = st.selectbox("Wybierz do usunięcia", options=[k['nazwa'] for k in kat_data])
-                if st.button("Usuń kategorię"):
-                    id_k = next(k['id'] for k in kat_data if k['nazwa'] == kd)
-                    supabase.table("kategorie").delete().eq("id", id_k).execute()
-                    st.rerun()
+            st.subheader("🗑️ Usuń Kategorię")
+            if kat_list:
+                to_del = st.selectbox("Wybierz do usunięcia", options=[k['nazwa'] for k in kat_list])
+                if st.button("Usuń bezpowrotnie"):
+                    id_del = next(k['id'] for k in kat_list if k['nazwa'] == to_del)
+                    try:
+                        supabase.table(get_table_name("kategorie")).delete().eq("id", id_del).execute()
+                        st.rerun()
+                    except:
+                        st.error("Nie można usunąć kategorii, która ma przypisane produkty!")
