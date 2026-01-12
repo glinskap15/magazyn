@@ -1,84 +1,87 @@
 import streamlit as st
 from supabase import create_client, Client
 
-# --- Konfiguracja Połączenia Supabase ---
-# W wersji produkcyjnej użyj st.secrets (https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management)
-URL = "TWOJ_SUPABASE_URL"
-KEY = "TWOJ_SUPABASE_ANON_KEY"
+# --- KONFIGURACJA ---
+# Upewnij się, że te dane są poprawne w Twoim panelu Supabase Settings -> API
+SUPABASE_URL = "TWOJ_URL" 
+SUPABASE_KEY = "TWOJ_ANON_KEY"
 
 @st.cache_resource
 def init_connection():
-    return create_client(URL, KEY)
+    try:
+        return create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        st.error(f"Nie udało się połączyć z Supabase: {e}")
+        return None
 
 supabase = init_connection()
 
-# --- Funkcje Obsługi Bazy Danych ---
+# --- FUNKCJE LOGIKI ---
 
-def get_categories():
-    """Pobiera listę wszystkich kategorii."""
-    response = supabase.table("Kategorie").select("*").execute()
-    return response.data
+def fetch_categories():
+    """Pobiera kategorie z bazy."""
+    try:
+        # Uwaga: Supabase domyślnie używa nazw tabel wrażliwych na wielkość liter
+        res = supabase.table("Kategorie").select("id, nazwa").execute()
+        return res.data
+    except Exception as e:
+        st.error(f"Błąd podczas pobierania kategorii: {e}")
+        return []
 
-def add_product(nazwa, liczba, cena, kategoria_id):
-    """Dodaje nowy produkt powiązany z kategorią."""
-    data = {
+def add_product_to_db(nazwa, liczba, cena, kategoria_id):
+    """Wysyła nowy produkt do bazy."""
+    payload = {
         "nazwa": nazwa,
-        "liczba": liczba,
-        "cena": cena,
-        "kategoria_id": kategoria_id
+        "liczba": int(liczba),
+        "cena": float(cena),
+        "kategoria_id": int(kategoria_id)
     }
-    supabase.table("Produkty").insert(data).execute()
-    st.success(f"Dodano produkt: {nazwa}")
+    try:
+        supabase.table("Produkty").insert(payload).execute()
+        st.success(f"Pomyślnie dodano: {nazwa}")
+    except Exception as e:
+        st.error(f"Błąd zapisu: {e}")
 
-# --- Interfejs Użytkownika ---
+# --- INTERFEJS ---
 
-st.title("📦 Zarządzanie Magazynem (Supabase)")
+st.title("📦 System Zarządzania Produktami")
 
-# Pobieramy kategorie do selectboxa
-kategorie = get_categories()
-kategorie_dict = {cat['nazwa']: cat['id'] for cat in kategorie}
-
-# --- Formularz Dodawania Produktu ---
-st.header("➕ Dodaj Nowy Produkt")
-
-with st.form("add_product_form", clear_on_submit=True):
-    col1, col2 = st.columns(2)
+if supabase:
+    # 1. Pobieranie danych
+    categories_data = fetch_categories()
     
-    with col1:
-        nazwa = st.text_input("Nazwa produktu")
-        liczba = st.number_input("Liczba (szt.)", min_value=0, step=1)
-    
-    with col2:
-        cena = st.number_input("Cena", min_value=0.0, format="%.2f")
-        # Tutaj wybieramy kategorię na podstawie relacji ze schematu
-        wybrana_kat_nazwa = st.selectbox("Kategoria", options=list(kategorie_dict.keys()))
-    
-    submit = st.form_submit_button("Zapisz w bazie")
+    if not categories_data:
+        st.warning("Baza kategorii jest pusta. Dodaj najpierw kategorie w panelu Supabase.")
+    else:
+        # Mapowanie nazwy na ID dla Selectboxa
+        cat_options = {item['nazwa']: item['id'] for item in categories_data}
 
-    if submit:
-        if nazwa and wybrana_kat_nazwa:
-            kat_id = kategorie_dict[wybrana_kat_nazwa]
-            add_product(nazwa, liczba, cena, kat_id)
+        # 2. Formularz
+        with st.form("product_form"):
+            st.subheader("Dodaj nowy produkt")
+            name = st.text_input("Nazwa produktu")
+            quantity = st.number_input("Ilość", min_value=1, step=1)
+            price = st.number_input("Cena (PLN)", min_value=0.0, format="%.2f")
+            category_name = st.selectbox("Wybierz kategorię", options=list(cat_options.keys()))
+            
+            submitted = st.form_submit_button("Wyślij do bazy")
+            
+            if submitted:
+                if name:
+                    add_product_to_db(name, quantity, price, cat_options[category_name])
+                else:
+                    st.error("Nazwa produktu jest wymagana!")
+
+    st.divider()
+
+    # 3. Podgląd tabeli (JOIN)
+    st.subheader("Aktualna lista produktów")
+    try:
+        # Pobieramy produkty i nazwę kategorii przez relację FK
+        query = supabase.table("Produkty").select("nazwa, liczba, cena, Kategorie(nazwa)").execute()
+        if query.data:
+            st.write(query.data) # Surowy podgląd dla testu, czy dane płyną
         else:
-            st.error("Wypełnij wszystkie pola!")
-
-st.divider()
-
-# --- Widok Tabeli ---
-st.header("📋 Stan Magazynu")
-# Pobieramy produkty wraz z danymi o kategoriach (Join)
-response = supabase.table("Produkty").select("nazwa, liczba, cena, Kategorie(nazwa)").execute()
-
-if response.data:
-    # Formatowanie danych do ładnej tabeli
-    formatted_data = [
-        {
-            "Produkt": p['nazwa'],
-            "Ilość": p['liczba'],
-            "Cena": f"{p['cena']} zł",
-            "Kategoria": p['Kategorie']['nazwa'] if p['Kategorie'] else "Brak"
-        } for p in response.data
-    ]
-    st.dataframe(formatted_data, use_container_width=True)
-else:
-    st.info("Brak produktów w bazie danych.")
+            st.info("Brak produktów w tabeli.")
+    except Exception as e:
+        st.error(f"Błąd wyświetlania tabeli: {e}")
